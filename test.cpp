@@ -25,6 +25,7 @@
 
 
 #include "bitop.h"
+#include <errno.h>
 
 using namespace std;
 
@@ -105,6 +106,16 @@ int test_map_deconstruct(int argc, char *argv[])
     return 0;
 }
 
+#include <openssl/md5.h>
+unsigned get_hash_key(const char *d, unsigned l)
+{
+    static unsigned char buf[16];
+    MD5((const unsigned char *)d, l, buf);
+    unsigned u;
+    memcpy(&u, buf + 12, 4);
+    return u;
+}
+
 int hex2str(const string &hex, string &result)
 {
     if (hex.size() % 2 != 0) return -1;
@@ -122,6 +133,7 @@ int hex2str(const string &hex, string &result)
 
 std::string str2hex(const char* key, unsigned len)
 {
+    unsigned bucketnum = get_hash_key(key, len)%10000000;
     char hex[1024]={0};
     char buffer[8]={0};
     for(unsigned n=0; n < len ; ++n) {
@@ -130,8 +142,10 @@ std::string str2hex(const char* key, unsigned len)
         hex[2*n+1]=buffer[1];
     }
     hex[len*2]='\0';
-
-    return std::string(hex);
+    
+    char buf[1024] = {0};
+    snprintf(buf, 1024, "%u_%s", bucketnum, hex);
+    return std::string(buf);
 }
 
 int test_hex2str(int argc, char *argv[])
@@ -154,8 +168,8 @@ int test_str2hex(int argc, char *argv[])
 
 int test_strerror(int argc, char *argv[])
 {
-    int errno = atoi(argv[1]);
-    string result = strerror(errno); 
+    int errorno = atoi(argv[1]);
+    string result = strerror(errorno); 
     cout<<result<<endl;
 }
 
@@ -950,9 +964,89 @@ int gen_rfv_redpacket(int portion, int coin, int factor, vector<int> &vecnums)
         vecnums[i] += rsv_port;
     } 
     sort(vecnums.begin(), vecnums.end());
-    shuffle_vecint(vecnums);
+    //shuffle_vecint(vecnums);
 }
 
+int gen_lucky_redpacket(int portion, int coin, int factor, vector<int> &vecnums)
+{
+    //幸运数出现的概率
+    map<int, int> map_lucky_rate;
+    map_lucky_rate[2017] = 0;
+    map_lucky_rate[1314] = 0;
+    map_lucky_rate[381] = 0;
+
+    int retry_times = 3;
+    
+    int useq = rand();
+
+redo:
+    vecnums.clear();
+    retry_times --;
+    if (retry_times < 0)
+    {
+        //DEBUG_P(LOG_ERROR, "CCreateRedPacketMineSweep::GetRateNew. reach retry limit!\n");
+        printf("CCreateRedPacketMineSweep::GetRateNew. reach retry limit!useq:%d\n", useq);
+        return false;
+    }
+    if(0 != gen_redpacket1(portion,coin,211,vecnums))
+    {
+        printf("CCreateRedPacketMineSweep::GetRateNew err, portion = %d, coin = %d, useq:%d\n", portion, coin, useq);
+        return false;
+    }
+
+    for (unsigned i = 0; i < vecnums.size(); i++)
+    {
+        int c = vecnums[i];
+        if (map_lucky_rate.find(c) != map_lucky_rate.end())
+        {
+            int prob = map_lucky_rate[c];
+            int r = rand();
+            r = r % 100; //[0,99]
+            if (r > prob || prob == 0)  //不要出现, 重新生成
+            {
+                printf("CCreateRedPacketMineSweep::GetRateNew, regen! c:%d r:%d prob:%d, useq:%d, retry:%d\n", c, r, prob, useq, retry_times);
+                goto redo;
+            }
+        }
+    }
+
+    return true;
+
+}
+
+
+int test_splitstr(int argc, char* argv[])
+{
+    string probstr = argv[1];
+    map<int, int> testmap;
+    string delim1 = "|";
+    string delim2 = ":";
+    size_t pos= 0;
+    size_t posn = 0;
+    probstr += delim1;
+    for(;(posn=probstr.find(delim1, pos))!=std::string::npos;)
+    {
+        string t = probstr.substr(pos, posn);
+        size_t pos1 = t.find(delim2);
+        if (pos1 != std::string::npos)
+        {
+            string key = t.substr(0, pos1);
+            string value = t.substr(pos1+1);
+            if (key.length() > 0 && value.length() > 0)
+            {
+                int lucknum = atoi(key.c_str());
+                int prob = atoi(value.c_str());
+                testmap[lucknum] = prob;
+            }
+        }
+        pos = posn+1;
+    }
+
+    for(map<int, int>::iterator it = testmap.begin(); it!= testmap.end(); it++)
+    {
+        printf("key:%d,value:%d\n", it->first, it->second);
+    }
+}
 
 int test_gen_redpacket(int argc, char* argv[])
 {
@@ -979,7 +1073,13 @@ int test_gen_redpacket(int argc, char* argv[])
         vec_nums.clear();
         //gen_redpacket1(test_portion, test_coin, 211,  vec_nums);
         //gen_redpacket(test_portion, test_coin, vec_nums);
-        gen_rfv_redpacket(test_portion, test_coin,  153, vec_nums);
+        //gen_rfv_redpacket(test_portion, test_coin,  153, vec_nums);
+        bool genok = gen_lucky_redpacket(test_portion, test_coin, 211, vec_nums);
+        if (!genok)
+        {
+            printf("gen_redpacket failed\n");
+            continue;
+        }
         
         int mine_number = 0; 
         int sum_check = 0;
@@ -1218,6 +1318,105 @@ int test_insertemptyvec(int argc, char *argv[])
     return 0;
 }
 
+int callstack(int &n)
+{
+    if (n <= 0) return 0;
+
+    //4K
+    int buf[1024] = {0};
+    buf[1023]=0x12345678;
+     
+    return n + callstack(--n);
+
+}
+    
+    
+ 
+
+
+int test_stack(int argc, char* argv[])
+{
+    if(argc != 2)
+    {
+        printf("%s n\n", argv[0]);
+        return 0;
+    }
+
+    int n = atoi(argv[1]) ;
+    int sum = callstack(n) ;
+
+    printf("sum: %d", sum);
+
+}
+
+int test_fori(int argc, char* argv[])
+{
+    for(int i=0;i<3;i++)
+    {
+        int pos=0;
+        pos++;
+        printf("%d\n", pos);
+    }
+
+}
+
+int test_emptymap(int argc, char* argv[])
+{
+    map<int, int> mapi;
+    map<int, int>::iterator it = mapi.find(123);
+    if (it == mapi.end())
+    {
+        printf("not found\n");
+    }
+    else
+    {
+        printf("found\n");
+    }
+
+
+}
+
+int test_sscanf(int argc, char* argv[])
+{
+    char *input = argv[1];
+    int ia1 = 0; 
+    int ia2 = 0; 
+    int nn = 0;
+    int n = sscanf(input, "%d, %*s, %d", &ia1,&ia2);
+    printf("sscanf ret :%d, ia1:%d, ia2:%d, nn:%d\n", n, ia1, ia2,nn);
+    return 0;
+}
+int test_fexist_1(int argc, char* argv[])
+{
+    char *filename = argv[1];
+    int ret = access(filename, F_OK);
+    if (ret)
+    {
+        printf("file not exist(access) or can not access! filename:%s, errno:%d\n", filename, errno);
+    }
+    else
+    {
+        printf("file exist (access)! filename:%s\n", filename);
+    }
+    
+    return ret;
+}
+int test_fexist_2(int argc, char* argv[])
+{
+    char *filename = argv[1];
+    struct stat st = {0};
+    int ret = stat(filename, &st);
+    if (ret)
+    {
+        printf("file not exist (stat)! filename:%s, errno:%d\n", filename, errno);
+    }
+    else
+    {
+        printf("file exist (stat)! filename:%s\n", filename);
+    }
+    
+    return ret;
+}
 
 int main(int argc, char* argv[])
 {
@@ -1229,7 +1428,7 @@ int main(int argc, char* argv[])
     //return test_hex2str(argc, argv);
     //return test_str2hex(argc, argv);
     //return test_rand(argc, argv);
-    return test_gen_redpacket(argc, argv);
+    //return test_gen_redpacket(argc, argv);
     //return test_boost_random(argc, argv);
     //return test_strerror(argc, argv);
     //return test_gen_redpacket_seq_excl(argc, argv);
@@ -1242,4 +1441,11 @@ int main(int argc, char* argv[])
     //return test_post_increment(argc, argv);
     //return test_g(argc, argv);
     //return test_insertemptyvec(argc, argv);
+    //return test_splitstr(argc, argv);
+    //return test_stack(argc, argv);
+    //return test_fori(argc, argv);
+    //return test_emptymap(argc, argv);
+    //return test_sscanf(argc, argv);
+    test_fexist_1(argc, argv);
+    test_fexist_2(argc, argv);
 }
