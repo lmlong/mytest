@@ -133,7 +133,7 @@ int hex2str(const string &hex, string &result)
 
 std::string str2hex(const char* key, unsigned len)
 {
-    unsigned bucketnum = get_hash_key(key, len)%10000000;
+    unsigned bucketnum = get_hash_key(key, len);
     char hex[1024]={0};
     char buffer[8]={0};
     for(unsigned n=0; n < len ; ++n) {
@@ -144,7 +144,7 @@ std::string str2hex(const char* key, unsigned len)
     hex[len*2]='\0';
     
     char buf[1024] = {0};
-    snprintf(buf, 1024, "%u_%s", bucketnum, hex);
+    snprintf(buf, 1024, "bucket:%u: hex:%s", bucketnum, hex);
     return std::string(buf);
 }
 
@@ -1326,7 +1326,7 @@ int callstack(int &n)
     int buf[1024] = {0};
     buf[1023]=0x12345678;
      
-    return n + callstack(--n);
+    return 1 + callstack(--n);
 
 }
     
@@ -1418,9 +1418,193 @@ int test_fexist_2(int argc, char* argv[])
     return ret;
 }
 
+int test_intmulfloat(int argc, char* argv[])
+{
+    int i = 10000;
+    int res = i* 1.0234;
+    printf("1000*1.0234 = %d\n", res);
+    return 0;
+}
+
+int test_vecref(int argc, char* argv[])
+{
+    vector<A> va;
+    A a1(10);
+    printf("&a1: %p\n", &a1);
+    va.push_back(a1);
+    A a2(11);
+    printf("&a2: %p\n", &a2);
+    va.push_back(a2);
+    
+    printf("before modify:\n");
+    for(int i=0;i<va.size();i++)
+    {
+        printf("index: %d, &ele:%p, a:%d\n", i, &va[i], va[i].a);
+    }
+    
+    A &a = va[0];
+    a.a = 99;
+
+    printf("after modify:\n");
+    for(int i=0;i<va.size();i++)
+    {
+        printf("index: %d, &ele:%p, a:%d\n", i, &va[i], va[i].a);
+    }
+
+    return 0;
+}
+
+
+int test_asctime(int argc, char* argv[])
+{
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+    printf("now:%s\n", asctime(tm_now));
+    return 0;
+}
+
+#include <dlfcn.h>
+int test_dlopen(int argc, char * argv[])
+{
+    char *sofile = argv[1];
+
+    void *handle;
+
+    char *error;
+
+    handle = dlopen(sofile, RTLD_LAZY);
+    if (!handle) {
+       fprintf(stderr, "%s\n", dlerror());
+       exit(EXIT_FAILURE);
+    }
+
+    dlerror();
+
+
+    dlsym(handle, "create_app");
+
+    if ((error = dlerror()) != NULL)  {
+       fprintf(stderr, "%s\n", error);
+       exit(EXIT_FAILURE);
+    }
+
+    dlclose(handle);
+    exit(EXIT_SUCCESS); 
+
+    return 0;
+}
+
+class IntBitSegment
+{
+public:
+    IntBitSegment(int start, int end)
+    {
+        _start =  start;
+        _end = end;
+        if (_end > 32)
+            throw std::invalid_argument( "received negative value" );
+        
+        _bit_width = end - start +1;
+        _shift_width = start;
+        _bit_mask = (1 << _bit_width) -1;
+        _get_mask =  _bit_mask << _shift_width;
+        _clear_mask = ~_get_mask;
+        printf("_bit_width:%#x, _shift_width:%#x, _bit_mask:%#x, _get_mask:%#x, _clear_mask:%#x\n",
+                _bit_width, _shift_width, _bit_mask, _get_mask, _clear_mask);
+    }
+
+    int get_segment(int value)
+    {
+        return (value & _get_mask)>> _shift_width;
+    }
+    void clear_segment(int& value)
+    {
+        value &= _clear_mask;
+    }
+    void set_segment(int& value, int segment)
+    {
+        clear_segment(value);
+        value |= (segment & _bit_mask) << _shift_width;
+    }
+    string tobinarystr(int value)
+    {
+        vector<int> stack;
+        for(int i=0;i<sizeof(value)*8;i++)
+        {
+            //printf("i:%d, value:%d\n", i, value);
+            stack.push_back(value&0x1);
+            value>>=1;
+        }
+        //printf("stack size:%d\n", stack.size());
+        char pbuf[128]={0};
+        int n =0;
+        for(int i=stack.size();i>0;i--)
+        {
+            n += snprintf(pbuf+n,128-n, "%c", stack[i-1]?'1':'0');
+            if ((i-1)%4 == 0)
+            {
+                n += snprintf(pbuf+n,128-n," ");
+            }
+        }
+        return pbuf;
+    }
+    
+    
+
+private:
+    int _start;
+    int _end;
+    int _get_mask;
+    int _clear_mask;
+    int _bit_mask;
+    int _shift_width;
+    int _bit_width;
+};
+
+    
+
+
+int test_bitsegment(int argc, char* argv[])
+{
+    //IntBitSegment ibs(4, 7);
+    int start = 5;
+    int end = 8;
+    IntBitSegment ibs(start, end);
+    int value = 0;
+    int segment = 0x9;
+    printf("start:%d, end:%d\n", start, end);
+    printf("value before:%#x, segment:%#x\n", value, segment);
+    printf("\n");
+    
+    ibs.set_segment(value, segment);
+    printf("value after value:%#x\n", value);
+    printf("binary:%s\n", ibs.tobinarystr(value).c_str());
+    printf("\n");
+
+    int seg2 = ibs.get_segment(value);
+    printf("segment get:%#x\n", seg2);
+    printf("\n");
+
+    ibs.clear_segment(value);
+    printf("segment clear:%#x\n", value);
+    printf("binary:%s\n", ibs.tobinarystr(value).c_str());
+    printf("\n");
+
+
+    return 0;
+}
+
+
+
+
+
 int main(int argc, char* argv[])
 {
     
+    return test_bitsegment(argc, argv);
+    //return test_dlopen(argc, argv);
+    //return test_asctime(argc, argv);
+    //return test_vecref(argc, argv);
     //return test_bitshift(argc, argv);
     //return test_map(argc, argv);
     //return test_ref(argc, argv);
@@ -1446,6 +1630,9 @@ int main(int argc, char* argv[])
     //return test_fori(argc, argv);
     //return test_emptymap(argc, argv);
     //return test_sscanf(argc, argv);
-    test_fexist_1(argc, argv);
-    test_fexist_2(argc, argv);
+
+    //test_fexist_1(argc, argv);
+    //test_fexist_2(argc, argv);
+    //return test_intmulfloat(argc, argv);
+
 }
